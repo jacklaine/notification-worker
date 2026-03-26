@@ -1,62 +1,160 @@
-# notification-worker
+# Inventory Service
 
-This project uses Quarkus, the Supersonic Subatomic Java Framework.
+Serviço responsável por consumir e persistir alerta de estoque.
 
-If you want to learn more about Quarkus, please visit its website: <https://quarkus.io/>.
+## 📋 Visão Geral
 
-## Running the application in dev mode
+- **Linguagem**: Java 21
+- **Framework**: Quarkus 3.34.1
+- **Banco de Dados**: PostgreSQL 18
+- **Message Broker**: Apache Kafka (SmallRye Reactive Messaging)
+- **Build**: Maven
 
-You can run your application in dev mode that enables live coding using:
+---
 
-```shell script
+## 🚀 Como Subir a Infraestrutura
+
+### Pré-requisitos
+
+- Docker e Docker Compose instalados
+- Git
+
+### Subir os Serviços com Docker Compose
+
+A infraestrutura local é composta por PostgreSQL. Kafka é provido pelo docker-compose do ecossistema (order-service).
+
+```bash
+# Subir todos os serviços em background
+docker-compose up -d
+
+# Visualizar logs em tempo real
+docker-compose logs -f
+
+# Parar todos os serviços
+docker-compose down
+
+# Parar e remover volumes (apaga dados)
+docker-compose down -v
+```
+
+### Verificar Status dos Serviços
+
+```bash
+# Listar containers em execução
+docker-compose ps
+
+# Verificar saúde do PostgreSQL
+docker-compose logs postgres | grep healthcheck
+```
+
+### Serviços Disponíveis
+
+| Serviço | Container | Porta | Credenciais |
+|---------|-----------|-------|-------------|
+| **PostgreSQL** | pg-inventory | 5445 | `user: pg-worker` / `pass: 0706` |
+
+---
+
+## 🏃 Como Executar o Serviço
+
+### Pré-requisitos
+
+- Java 21 JDK instalado
+- Maven 3.8+
+- Infraestrutura em execução (Docker Compose)
+- Kafka acessível em `localhost:9092`
+
+### Build do Projeto
+
+```bash
+# Compilar o projeto
+./mvnw clean package
+
+# Compilar sem executar testes
+./mvnw clean package -DskipTests
+```
+
+### Executar o Serviço
+
+```bash
+# Modo dev (hot reload)
 ./mvnw quarkus:dev
+
+# Ou após build
+java -jar target/quarkus-app/quarkus-run.jar
 ```
 
-> **_NOTE:_**  Quarkus now ships with a Dev UI, which is available in dev mode only at <http://localhost:8080/q/dev/>.
+O serviço estará disponível em **http://localhost:4646**
 
-## Packaging and running the application
+> **Dev UI** disponível em modo dev em http://localhost:4646/q/dev/
 
-The application can be packaged using:
+---
 
-```shell script
-./mvnw package
-```
+## 🏗️ Decisões Arquiteturais
 
-It produces the `quarkus-run.jar` file in the `target/quarkus-app/` directory.
-Be aware that it’s not an _über-jar_ as the dependencies are copied into the `target/quarkus-app/lib/` directory.
+### 1. Arquitetura Hexagonal (Ports & Adapters)
 
-The application is now runnable using `java -jar target/quarkus-app/quarkus-run.jar`.
+**Decisão**: Implementar uma arquitetura hexagonal para desacoplar domínio de infraestrutura.
 
-If you want to build an _über-jar_, execute the following command:
+**Trade-offs**:
+- ✅ **Vantagens**:
+  - Fácil testes unitários (domínio sem dependências externas)
+  - Migração de tecnologias sem alterar domínio (trocar BD, trocar Kafka)
+  - Independência entre camadas
+  - Alta coesão e baixo acoplamento
 
-```shell script
-./mvnw package -Dquarkus.package.jar.type=uber-jar
-```
+- ❌ **Desvantagens**:
+  - Curva de aprendizado mais acentuada
+  - Mais arquivos para mudanças simples
 
-The application, packaged as an _über-jar_, is now runnable using `java -jar target/*-runner.jar`.
+---
 
-## Creating a native executable
+### 2. Event-Driven Architecture (Comunicação Assíncrona)
 
-You can create a native executable using:
+**Decisão**: Usar publicação de eventos no Kafka para comunicação entre serviços. O inventory-service consome `OrderCreated` e publica `OrderConfirmed`/`OrderRejected` e `LowStockAlert`.
 
-```shell script
-./mvnw package -Dnative
-```
+**Trade-offs**:
+- ✅ **Vantagens**:
+  - Desacoplamento entre serviços
+  - Escalabilidade horizontal
+  - Auditoria de eventos
+  - Permitir múltiplos subscribers
 
-Or, if you don't have GraalVM installed, you can run the native executable build in a container using:
+- ❌ **Desvantagens**:
+  - Eventual consistency (não absoluta)
+  - Complexidade de debugging
+  - Necessidade de compensating transactions
+  - Overhead de infraestrutura
 
-```shell script
-./mvnw package -Dnative -Dquarkus.native.container-build=true
-```
+---
 
-You can then execute your native executable with: `./target/notification-worker-1.0.0-SNAPSHOT-runner`
+### 3. Java 21 + Quarkus 3.34
 
-If you want to learn more about building native executables, please consult <https://quarkus.io/guides/maven-tooling>.
+**Decisão**: Usar Java 21 (LTS) com Quarkus para startup rápido e baixo consumo de memória.
 
-## Provided Code
+**Trade-offs**:
+- ✅ **Vantagens**:
+  - LTS com suporte até 2029 (Java 21)
+  - Startup em milissegundos (dev mode)
+  - Hot reload nativo
+  - Possibilidade de compilação nativa (GraalVM)
 
-### REST
+- ❌ **Desvantagens**:
+  - Ecossistema menor que Spring Boot
+  - Algumas bibliotecas podem não ter extensão Quarkus
 
-Easily start your REST Web Services
+---
 
-[Related guide section...](https://quarkus.io/guides/getting-started-reactive#reactive-jax-rs-resources)
+### 4. Hibernate ORM Panache + Flyway para Persistência
+
+**Decisão**: Usar ORM com Panache e versionamento de schema com Flyway.
+
+**Trade-offs**:
+- ✅ **Vantagens**:
+  - Código de repositório simplificado (Panache)
+  - Migrações versionadas e auditáveis
+
+- ❌ **Desvantagens**:
+  - Performance inferior vs SQLs nativos
+
+---
